@@ -1,0 +1,52 @@
+name: Python App CI Pipeline
+
+# 1. 触发条件：只要有人往 main (或 master) 分支提交代码，自动触发流水线
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+
+jobs:
+  build-and-test:
+    name: Build, Test & Push Image
+    runs-on: ubuntu-latest # 使用 GitHub 提供的免费 Ubuntu 虚拟机环境
+
+    steps:
+      # 步骤 1：把 GitHub 仓库中的最新代码拉取（Checkout）到虚拟机里
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      # 步骤 2：安装 Python 环境
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      # 步骤 3：安装项目中依赖的 Flask 和 Pytest
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # 步骤 4：运行单元测试（这是 CI 保证质量的核心！）
+      - name: Run Unit Tests with Pytest
+        run: |
+          pytest test_app.py
+
+      # 步骤 5：登录到 Docker Hub
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # 步骤 6：构建 Docker 镜像，并打上 git commit 的 sha 唯一标识码以及 latest 标签
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/my-python-app:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/my-python-app:${{ github.sha }}
