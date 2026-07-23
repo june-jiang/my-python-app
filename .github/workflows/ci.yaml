@@ -67,9 +67,9 @@ jobs:
           cd manifest-repo
           
           # 3. 指定到 manifests 目录下的 deployment.yaml 进行替换
-          sed -i "s|image: emejian/my-python-app:.*|image: emejian/my-python-app:${NEW_TAG}|g" manifests/deployment.yaml
+          sed -i "s|image: emejian/my-python-app:.*|image: emejian/my-python-app:${NEW_TAG}|g" manifests/rollout.yaml
           
-          # 4. 提交 manifests/deployment.yaml 并推送到 Remote
-          git add manifests/deployment.yaml
+          # 4. 提交 manifests/rollout.yaml 并推送到 Remote
+          git add manifests/rollout.yaml
           git commit -m "ci: auto update image tag to ${NEW_TAG} [skip ci]" || exit 0
           git push
