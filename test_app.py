@@ -7,8 +7,8 @@ def client():
     with app.test_client() as client:
         yield client
 
-# 单元测试函数 1：测试根接口响应是否正常
 def test_hello_endpoint(client):
     response = client.get('/')
     assert response.status_code == 200
-    assert b"success" in response.data
+    # 验证页面里是否包含 APP VERSION
+    assert b"APP VERSION" in response.data
