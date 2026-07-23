@@ -50,3 +50,26 @@ jobs:
           tags: |
             ${{ secrets.DOCKERHUB_USERNAME }}/my-python-app:latest
             ${{ secrets.DOCKERHUB_USERNAME }}/my-python-app:${{ github.sha }}
+            
+# 步骤 7：自动更新 Manifest 仓库里的镜像 Tag (GitOps 关键步骤)
+      - name: Update Image Tag in Manifest Repo
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }} # 你的 GitHub 个人 Access Token
+          MANIFEST_REPO: "june-jiang/argocd-repo" # 仓库名保持不变
+          NEW_TAG: ${{ github.sha }}
+        run: |
+          # 1. 配置临时 git 用户信息
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # 2. Clone Manifest 仓库到本地 temp 目录
+          git clone https://x-access-token:${GH_TOKEN}@github.com/${MANIFEST_REPO}.git manifest-repo
+          cd manifest-repo
+          
+          # 3. 指定到 manifests 目录下的 deployment.yaml 进行替换
+          sed -i "s|image: emejian/my-python-app:.*|image: emejian/my-python-app:${NEW_TAG}|g" manifests/deployment.yaml
+          
+          # 4. 提交 manifests/deployment.yaml 并推送到 Remote
+          git add manifests/deployment.yaml
+          git commit -m "ci: auto update image tag to ${NEW_TAG} [skip ci]" || exit 0
+          git push
