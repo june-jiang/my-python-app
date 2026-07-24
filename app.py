@@ -3,8 +3,8 @@ from flask import Flask
 app = Flask(__name__)
 
 # 🌟 当前版本定义为 v1
-APP_VERSION = "v1.0"
-BG_COLOR = "#3498db" # 蓝色代表 v1
+APP_VERSION = "v2.0"
+BG_COLOR = "#2ecc71" # 绿色代表 v2
 
 @app.route('/')
 def hello():
