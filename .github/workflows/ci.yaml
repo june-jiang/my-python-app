@@ -38,6 +38,8 @@ jobs:
         run: pip install -r requirements-dev.txt
 
       - name: Lint and unit tests
+        env:
+          PYTHONPATH: ${{github.workspace}}
         run: |
           ruff check .
           pytest -q
