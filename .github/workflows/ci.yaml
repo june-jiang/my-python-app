@@ -1,0 +1,172 @@
+name: Secure CI and GitOps Update
+
+on:
+  pull_request:
+    branches: [main, master]
+  push:
+    branches: [main, master]
+
+permissions:
+  contents: read
+  security-events: write
+  packages: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/my-python-app
+
+jobs:
+  test-and-sast:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Lint and unit tests
+        run: |
+          ruff check .
+          pytest -q
+
+      - name: Bandit SAST
+        run: bandit -r app.py -ll
+
+      - name: Python dependency audit
+        run: pip-audit -r requirements.txt
+
+      - name: Gitleaks secret detection
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: python
+
+      - name: CodeQL analysis
+        uses: github/codeql-action/analyze@v3
+
+  build-scan-push:
+    if: github.event_name == 'push'
+    needs: test-and-sast
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build image locally for scanning
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          push: false
+          tags: local/my-python-app:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Trivy image vulnerability gate
+        uses: aquasecurity/trivy-action@0.30.0
+        with:
+          image-ref: local/my-python-app:${{ github.sha }}
+          format: table
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+
+      - name: Trivy SARIF report
+        uses: aquasecurity/trivy-action@0.30.0
+        with:
+          image-ref: local/my-python-app:${{ github.sha }}
+          format: sarif
+          output: trivy-results.sarif
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "0"
+
+      - name: Upload Trivy results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-results.sarif
+
+      - name: Push immutable image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:${{ github.sha }}
+            ${{ env.IMAGE_NAME }}:latest
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          cache-from: type=gha
+
+  update-gitops:
+    if: github.event_name == 'push'
+    needs: build-scan-push
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout GitOps repository
+        uses: actions/checkout@v4
+        with:
+          repository: june-jiang/argocd-repo
+          token: ${{ secrets.GH_PAT }}
+          path: gitops
+
+      - name: Update immutable image tag
+        working-directory: gitops
+        env:
+          NEW_TAG: ${{ github.sha }}
+          IMAGE_REPOSITORY: ${{ secrets.DOCKERHUB_USERNAME }}/my-python-app
+        run: |
+          python3 - <<'PY'
+          import os, re, pathlib
+          path = pathlib.Path("manifests/rollout.yaml")
+          text = path.read_text()
+          image = f'{os.environ["IMAGE_REPOSITORY"]}:{os.environ["NEW_TAG"]}'
+          updated, count = re.subn(r'image:\s+[^\s]+/my-python-app:[^\s]+', f'image: {image}', text)
+          if count != 1:
+              raise SystemExit(f"Expected one image replacement, got {count}")
+          path.write_text(updated)
+          PY
+
+      - name: Commit GitOps change
+        working-directory: gitops
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add manifests/rollout.yaml
+          git diff --cached --quiet && exit 0
+          git commit -m "deploy: my-python-app ${{ github.sha }}"
+          git push
