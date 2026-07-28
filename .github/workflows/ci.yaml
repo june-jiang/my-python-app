@@ -94,7 +94,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Trivy image vulnerability gate
-        uses: aquasecurity/trivy-action@0.30.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: local/my-python-app:${{ github.sha }}
           format: table
@@ -103,7 +103,7 @@ jobs:
           exit-code: "1"
 
       - name: Trivy SARIF report
-        uses: aquasecurity/trivy-action@0.30.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: local/my-python-app:${{ github.sha }}
           format: sarif
