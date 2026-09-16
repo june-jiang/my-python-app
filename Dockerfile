@@ -5,6 +5,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+RUN apt-get update \
+    && apt-get upgrade -y \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN groupadd --gid 10001 appgroup \
     && useradd \
         --uid 10001 \
@@ -17,7 +21,6 @@ COPY requirements.txt .
 
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY --chown=10001:10001 app.py .
 COPY --chown=10001:10001 . .
 
 USER 10001:10001
