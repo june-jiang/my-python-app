@@ -1,3 +1,5 @@
+import json
+import logging
 import os
 import random
 import time
@@ -15,6 +17,38 @@ app = Flask(__name__)
 
 
 # ============================================================
+# Logging configuration
+# ============================================================
+#
+# Application logs are written to stdout/stderr.
+#
+# In Kubernetes:
+#
+#   Application
+#       |
+#       | stdout / stderr
+#       v
+#   Container Runtime
+#       |
+#       v
+#   kubectl logs
+#
+# Later Grafana Alloy will collect these logs and send them
+# to Loki.
+#
+# Only the JSON message is emitted. This makes the application
+# log easy to parse later with Loki / LogQL.
+# ============================================================
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(message)s",
+)
+
+logger = logging.getLogger("my-python-app")
+
+
+# ============================================================
 # Application configuration
 # ============================================================
 
@@ -22,6 +56,7 @@ APP_VERSION = os.getenv("APP_VERSION", "v1.0")
 ROLLOUT_REVISION = os.getenv("ROLLOUT_REVISION", "unknown")
 
 # Probability of returning HTTP 500.
+#
 # Example:
 #   0.0 = 0%
 #   0.2 = 20%
@@ -32,6 +67,7 @@ BASE_LATENCY_MS = float(os.getenv("BASE_LATENCY_MS", "20"))
 JITTER_MS = float(os.getenv("JITTER_MS", "10"))
 
 # Slow request injection.
+#
 # Example:
 #   SLOW_REQUEST_RATE=0.05 -> 5% of requests are slow
 #   SLOW_LATENCY_MS=500    -> slow requests take about 500 ms
@@ -90,17 +126,21 @@ def _recorded_response(path: str):
     # --------------------------------------------------------
     # Latency injection
     #
-    # Most requests use the normal latency:
+    # Most requests use:
+    #
     #   BASE_LATENCY_MS + random jitter
     #
     # A configurable percentage of requests use:
+    #
     #   SLOW_LATENCY_MS
     #
     # Example:
+    #
     #   SLOW_REQUEST_RATE=0.05
     #   SLOW_LATENCY_MS=500
     #
     # approximately:
+    #
     #   95% -> 20-30 ms
     #    5% -> 500 ms
     # --------------------------------------------------------
@@ -121,9 +161,14 @@ def _recorded_response(path: str):
     # --------------------------------------------------------
     # Failure injection
     #
-    # This is intentionally independent from slow requests.
+    # Failure injection is intentionally independent from
+    # slow-request injection.
     #
-    # A slow request can still return HTTP 200.
+    # Therefore:
+    #
+    #   slow request + HTTP 200
+    #
+    # is perfectly possible.
     # --------------------------------------------------------
 
     if random.random() < FAILURE_RATE:
@@ -147,14 +192,14 @@ def _recorded_response(path: str):
 
 
     # --------------------------------------------------------
-    # Measure the actual request duration
+    # Measure actual request duration
     # --------------------------------------------------------
 
     elapsed = time.perf_counter() - start
 
 
     # --------------------------------------------------------
-    # Prometheus labels
+    # Common labels
     # --------------------------------------------------------
 
     labels = {
@@ -177,6 +222,50 @@ def _recorded_response(path: str):
     LATENCY.labels(
         **labels,
     ).observe(elapsed)
+
+
+    # --------------------------------------------------------
+    # Structured application log
+    # --------------------------------------------------------
+    #
+    # This records information about this individual request.
+    #
+    # Metrics aggregate many requests.
+    # Logs preserve information about a specific event.
+    #
+    # Example:
+    #
+    # {
+    #   "event": "http_request",
+    #   "method": "GET",
+    #   "path": "/",
+    #   "status": 200,
+    #   "latency_ms": 24.72,
+    #   "slow_request": false,
+    #   "app_version": "v12",
+    #   "rollout_revision": "abc123"
+    # }
+    #
+    # Later Loki / LogQL can parse these JSON fields.
+    # --------------------------------------------------------
+
+    log_event = {
+        "event": "http_request",
+        "method": request.method,
+        "path": path,
+        "status": status,
+        "latency_ms": round(elapsed * 1000, 2),
+        "slow_request": is_slow_request,
+        "app_version": APP_VERSION,
+        "rollout_revision": ROLLOUT_REVISION,
+    }
+
+    logger.info(
+        json.dumps(
+            log_event,
+            separators=(",", ":"),
+        )
+    )
 
 
     return jsonify(body), status
