@@ -123,6 +123,8 @@ LATENCY = Histogram(
 def _recorded_response(path: str):
     start = time.perf_counter()
 
+ # Simulate some work
+
     # --------------------------------------------------------
     # Latency injection
     #
@@ -155,7 +157,11 @@ def _recorded_response(path: str):
             BASE_LATENCY_MS + random.uniform(0, JITTER_MS),
         )
 
+    sleep_start = time.perf_counter()
     time.sleep(latency_ms / 1000)
+    sleep_end = time.perf_counter()
+    actual_sleep_ms = (sleep_end - sleep_start) * 1000
+
 
 
     # --------------------------------------------------------
@@ -255,6 +261,8 @@ def _recorded_response(path: str):
         "path": path,
         "status": status,
         "latency_ms": round(elapsed * 1000, 2),
+        "planned_sleep_ms": round(latency_ms, 2),
+        "actual_sleep_ms": round(actual_sleep_ms, 2),
         "slow_request": is_slow_request,
         "app_version": APP_VERSION,
         "rollout_revision": ROLLOUT_REVISION,
