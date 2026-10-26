@@ -112,6 +112,8 @@ tracer_provider.add_span_processor(
 
 trace.set_tracer_provider(tracer_provider)
 
+tracer = trace.get_tracer("my-python-app.business")
+
 FlaskInstrumentor().instrument_app(
     app,
     excluded_urls="/metrics,/healthz,/readyz",
@@ -198,11 +200,18 @@ def _recorded_response(path: str):
             BASE_LATENCY_MS + random.uniform(0, JITTER_MS),
         )
 
-    sleep_start = time.perf_counter()
-    time.sleep(latency_ms / 1000)
-    sleep_end = time.perf_counter()
-    actual_sleep_ms = (sleep_end - sleep_start) * 1000
 
+    with tracer.start_as_current_span("simulate_processing") as span:
+
+        span.set_attribute("app.planned_latency_ms", latency_ms)
+        span.set_attribute("app.slow_request", is_slow_request)
+
+        sleep_start = time.perf_counter()
+        time.sleep(latency_ms / 1000)
+        sleep_end = time.perf_counter()
+
+        actual_sleep_ms = (sleep_end - sleep_start) * 1000
+        span.set_attribute("app.actual_sleep_ms", actual_sleep_ms)
 
 
     # --------------------------------------------------------
@@ -217,25 +226,30 @@ def _recorded_response(path: str):
     #
     # is perfectly possible.
     # --------------------------------------------------------
+    with tracer.start_as_current_span("evaluate_failure") as span:
 
-    if random.random() < FAILURE_RATE:
-        status = 500
 
-        body = {
-            "message": "simulated failure",
-            "version": APP_VERSION,
-        }
+        if random.random() < FAILURE_RATE:
 
-    else:
-        status = 200
+            status = 500
 
-        body = {
-            "message": "GitOps canary demo",
-            "version": APP_VERSION,
-            "rollout_revision": ROLLOUT_REVISION,
-            "latency_ms": round(latency_ms, 2),
-            "slow_request": is_slow_request,
-        }
+            body = {
+
+                "message": "simulated failure",
+                "version": APP_VERSION,
+            }
+
+        else:
+            status = 200
+
+            body = {
+                "message": "GitOps canary demo",
+                "version": APP_VERSION,
+                "rollout_revision": ROLLOUT_REVISION,
+                "latency_ms": round(latency_ms, 2),
+                "slow_request": is_slow_request,
+            }
+        span.set_attribute("app.simulated_http_status", status)
 
 
     # --------------------------------------------------------
@@ -295,6 +309,21 @@ def _recorded_response(path: str):
     #
     # Later Loki / LogQL can parse these JSON fields.
     # --------------------------------------------------------
+    
+    current_span = trace.get_current_span()
+    span_context = current_span.get_span_context()
+
+    trace_id = (
+        format(span_context.trace_id, "032x")
+        if span_context.is_valid
+        else None
+    )
+
+    span_id = (
+        format(span_context.span_id, "016x")
+        if span_context.is_valid
+        else None
+    )
 
     log_event = {
         "event": "http_request",
@@ -307,6 +336,10 @@ def _recorded_response(path: str):
         "slow_request": is_slow_request,
         "app_version": APP_VERSION,
         "rollout_revision": ROLLOUT_REVISION,
+
+        # OpenTelemetry correlation
+        "trace_id": trace_id,
+        "span_id": span_id,
     }
 
     logger.info(
