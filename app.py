@@ -12,9 +12,17 @@ from prometheus_client import (
     generate_latest,
 )
 
+from opentelemetry import trace
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
+    OTLPSpanExporter,
+)
+from opentelemetry.instrumentation.flask import FlaskInstrumentor
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+
 
 app = Flask(__name__)
-
 
 # ============================================================
 # Logging configuration
@@ -75,6 +83,39 @@ SLOW_REQUEST_RATE = float(os.getenv("SLOW_REQUEST_RATE", "0"))
 SLOW_LATENCY_MS = float(os.getenv("SLOW_LATENCY_MS", "500"))
 
 
+# ============================================================
+# OpenTelemetry Tracing
+# ============================================================
+
+OTEL_ENDPOINT = os.getenv(
+    "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+    "http://alloy.logging.svc.cluster.local:4318/v1/traces",
+)
+
+resource = Resource.create(
+    {
+        "service.name": "my-python-app",
+        "service.version": APP_VERSION,
+        "rollout.revision": ROLLOUT_REVISION,
+    }
+)
+
+tracer_provider = TracerProvider(resource=resource)
+
+span_exporter = OTLPSpanExporter(
+    endpoint=OTEL_ENDPOINT,
+)
+
+tracer_provider.add_span_processor(
+    BatchSpanProcessor(span_exporter)
+)
+
+trace.set_tracer_provider(tracer_provider)
+
+FlaskInstrumentor().instrument_app(
+    app,
+    excluded_urls="/metrics,/healthz,/readyz",
+)
 # ============================================================
 # Prometheus metrics
 # ============================================================
